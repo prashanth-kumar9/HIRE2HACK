@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <title>ScreenFlow — Job applications</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <section id="connectView" class="connect-shell">
+    <form id="connectForm" class="connect-card">
+      <div class="brand"><span class="brand-mark">S</span><span>screenflow<small>HIRING OPERATIONS</small></span></div>
+      <div class="eyebrow">YOUR RECRUITER WORKSPACE</div>
+      <h1>Every application.<br>One place.</h1>
+      <p>Connect to review jobs, see candidate details, and manage application statuses.</p>
+      <label for="apiToken">API access token</label>
+      <input id="apiToken" type="password" autocomplete="off" required placeholder="Enter your API_ACCESS_TOKEN" aria-describedby="tokenHelp" spellcheck="false">
+      <p id="tokenHelp" class="help">Use API_ACCESS_TOKEN from your server’s .env file. The token stays in this page’s memory until you disconnect or reload.</p>
+      <button id="connectButton" class="btn btn-primary" type="submit">Connect to workspace <span aria-hidden="true">→</span></button>
+      <p id="connectError" class="error-text" role="alert" hidden></p>
+      <div class="connect-footer">Job applications, connected to Supabase.</div>
+    </form>
+  </section>
+
+  <div id="workspace" class="app-shell" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="/" id="homeLink"><span class="brand-mark">S</span><span>screenflow<small>HIRING OPERATIONS</small></span></a>
+      <p class="side-label">WORKSPACE</p>
+      <button class="nav-item active" id="jobsNav"><span aria-hidden="true">▦</span><span class="nav-label">Job applications</span></button>
+      <div class="sidebar-note"><span class="live-dot"></span> Connected workspace<small>Jobs · Candidates · Applications</small></div>
+    </aside>
+    <main class="main-area">
+      <header class="topbar">
+        <div class="breadcrumb">Workspace <span>/</span> <b id="crumb">Job applications</b></div>
+        <button id="disconnectButton" class="btn btn-quiet">Disconnect</button>
+      </header>
+      <section class="page">
+        <div id="errorBanner" class="error-banner" role="alert" hidden></div>
+        <div id="successBanner" class="success-banner" role="status" hidden></div>
+        <div id="jobsView">
+          <div class="page-heading">
+            <div><div class="eyebrow">HIRING OPERATIONS</div><h1>Job applications</h1><p>A clear view of your jobs and the people applying.</p></div>
+            <button class="btn btn-quiet" id="refreshJobs"><span aria-hidden="true">↻</span> Refresh jobs</button>
+          </div>
+          <article class="stat-card"><span class="stat-icon" aria-hidden="true">▦</span><div><small>Total jobs</small><strong id="totalJobs">—</strong><em>In your workspace</em></div></article>
+          <div class="section-heading"><div><h2>Jobs</h2><p>Select a job to review its applicants.</p></div><span class="count-pill" id="jobCount">Loading…</span></div>
+          <div id="jobList" class="job-list" aria-live="polite"></div>
+          <div class="pagination"><span id="jobsPaginationInfo"></span><div class="pagination-actions"><button class="page-btn" id="prevJobs" aria-label="Previous jobs page">‹</button><span id="jobsPageNumber"></span><button class="page-btn" id="nextJobs" aria-label="Next jobs page">›</button></div></div>
+          <p class="footnote">Job descriptions and IDs are read directly from your database.</p>
+        </div>
+
+        <div id="applicationsView" hidden>
+          <button class="back-link" id="backToJobs">← Back to jobs</button>
+          <div class="page-heading application-heading">
+            <div><div class="eyebrow">JOB APPLICATIONS</div><h1 id="jobTitle"></h1><p id="jobIdLabel" class="mono"></p></div>
+            <div class="heading-actions"><button class="btn btn-quiet" id="refreshApplications">↻ Refresh</button><button class="btn btn-primary" id="inviteButton">Invite all candidates <span aria-hidden="true">↗</span></button></div>
+          </div>
+          <div class="summary-strip"><div><small>Total applications</small><strong id="applicationTotal">—</strong></div><div><small>Current page</small><strong id="currentPageLabel">—</strong></div></div>
+          <div class="table-card">
+            <div class="table-toolbar"><div><h2>Applicants</h2><p>Candidate details, consent preferences, and application statuses.</p></div><span class="count-pill">Live data</span></div>
+            <div class="table-scroll" tabindex="0" role="region" aria-label="Applicants table, scroll horizontally for more fields">
+              <table><caption class="sr-only">Applications and candidate details for the selected job</caption><thead><tr><th scope="col">CANDIDATE</th><th scope="col">PHONE</th><th scope="col">APPLICATION ID</th><th scope="col">CANDIDATE STATUS</th><th scope="col">APPLICATION STATUS</th><th scope="col">SMS CONSENT</th><th scope="col">EMAIL CONSENT</th></tr></thead><tbody id="applicationsBody"></tbody></table>
+              <div id="applicationsEmpty" class="empty-state" aria-live="polite" hidden></div>
+            </div>
+            <div class="pagination"><span id="paginationInfo"></span><div class="pagination-actions"><label class="sr-only" for="pageSize">Applications per page</label><select id="pageSize"><option value="10">10 / page</option><option value="25">25 / page</option><option value="50">50 / page</option></select><button class="page-btn" id="prevPage" aria-label="Previous applications page">‹</button><span id="pageNumber"></span><button class="page-btn" id="nextPage" aria-label="Next applications page">›</button></div></div>
+          </div>
+          <p class="footnote">Inviting updates every application for this job, across all pages. This action does not send SMS.</p>
+        </div>
+        <p id="loadingStatus" class="loading-status" role="status" hidden>Loading workspace data…</p>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="inviteDialog" aria-labelledby="confirmTitle" aria-describedby="confirmDescription">
+    <div class="modal-icon" aria-hidden="true">↗</div><h2 id="confirmTitle">Invite all candidates?</h2>
+    <p id="confirmDescription">Update every application for this job, including applications on other pages and candidates without SMS consent.</p>
+    <div class="confirm-count"><strong id="confirmCount">0</strong><span>applications for this job</span></div>
+    <p class="modal-note">Candidate status will become <b>SMS_SENT</b> and application status will become <b>Invited Candidates</b>. No SMS is sent. Existing statuses will be replaced.</p>
+    <div class="modal-actions"><button class="btn btn-quiet" id="cancelInvite" autofocus>Cancel</button><button class="btn btn-primary" id="confirmInvite">Update applications</button></div>
+  </dialog>
+</body>
+</html>
