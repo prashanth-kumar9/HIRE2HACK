@@ -1,0 +1,14 @@
+com\notificationsystem\template\NotificationTemplateFactoryTest.class
+com\notificationsystem\template\SmsTemplateTest.class
+com\notificationsystem\model\ChannelTypeTest.class
+com\notificationsystem\service\NotificationDispatcherTest.class
+com\notificationsystem\api\NotificationServiceTest.class
+com\notificationsystem\client\NotificationHttpClientTest.class
+com\notificationsystem\TestConfig.class
+com\notificationsystem\NotificationServiceApplicationTest.class
+com\notificationsystem\model\ScreeningNotificationRequestTest.class
+com\notificationsystem\template\EmailTemplateTest.class
+com\notificationsystem\api\AsyncNotificationServiceTest.class
+com\notificationsystem\service\UserPreferenceServiceTest.class
+com\notificationsystem\TestConfig$1.class
+com\notificationsystem\factory\NotificationChannelFactoryTest.class
