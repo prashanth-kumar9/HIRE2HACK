@@ -18,7 +18,7 @@ function controls() {
   $('confirmInvite').disabled = state.inviting;
   $('cancelInvite').disabled = state.inviting;
   $('loadingStatus').hidden = !busy;
-  text('loadingStatus', state.inviting ? 'Updating application statuses…' : 'Loading workspace data…');
+  text('loadingStatus', state.inviting ? 'Triggering screening pipeline…' : 'Loading workspace data…');
   for (const row of $('jobList').querySelectorAll('button')) row.disabled = busy;
   $('workspace').setAttribute('aria-busy', String(busy));
 }
@@ -56,7 +56,6 @@ async function api(path, { method = 'GET', signal } = {}) {
       : 'Cannot reach the server. Check that the backend is running, then try again.');
   }
   if (response.status === 401) {
-    // Reset before handling the error so no candidate details remain on screen.
     state.inviting = false;
     disconnect('Access denied. Enter the API_ACCESS_TOKEN configured on your server.');
     throw new Error('Unauthorized');
@@ -96,7 +95,7 @@ function renderJobs(payload) {
     row.addEventListener('click', () => { if (!state.loading && !state.inviting) openJob(job); });
     fragment.append(row);
   }
-  if (!payload.data.length) fragment.append(element('div', 'empty-state', 'No jobs yet. Add a job in Supabase to get started.'));
+  if (!payload.data.length) fragment.append(element('div', 'empty-state', 'No jobs yet.'));
   $('jobList').replaceChildren(fragment);
   const page = pageInfo(state.jobsOffset, JOBS_LIMIT, state.jobsTotal);
   text('jobsPaginationInfo', `Showing ${page.range} jobs`);
@@ -105,8 +104,12 @@ function renderJobs(payload) {
 
 function statusCell(value) {
   const cell = element('td');
-  const invited = value === 'SMS_SENT' || value === 'Invited Candidates';
-  cell.append(element('span', `status${invited ? ' invited' : ''}`, value ?? '—'));
+  let cls = 'status';
+  if (value === 'SMS_SENT' || value === 'EMAIL_SENT' || value === 'Invited Candidates') cls += ' invited';
+  if (value === 'BOOKED' || value === 'Interview Scheduled') cls += ' booked';
+  if (value === 'SCREENING_PASSED') cls += ' passed';
+  if (value === 'SCREENING_FAILED' || value === 'UNRESPONSIVE') cls += ' failed';
+  cell.append(element('span', cls, value ?? '—'));
   return cell;
 }
 
@@ -121,6 +124,7 @@ function renderApplications(payload) {
   text('pageNumber', `${page.number} / ${page.pages}`);
   text('paginationInfo', `Showing ${page.range} applications`);
   const fragment = document.createDocumentFragment();
+
   for (const application of payload.applications) {
     const row = element('tr');
     const candidate = application.candidate;
@@ -133,11 +137,27 @@ function renderApplications(payload) {
       element('small', 'candidate-id', application.candidateId));
     details.append(avatar, copy);
     const candidateCell = element('td'); candidateCell.append(details);
-    row.append(candidateCell, element('td', '', candidate?.phone || '—'),
-      element('td', 'id-cell', application.applicationId), statusCell(application.candidateStatus), statusCell(application.applicationStatus));
+
+    const bookingCell = element('td');
+    const bookingLink = document.createElement('a');
+    bookingLink.href = `http://localhost:3001/book/${application.applicationId}`;
+    bookingLink.target = '_blank';
+    bookingLink.className = 'btn btn-quiet';
+    bookingLink.style.cssText = 'padding:4px 8px;font-size:0.75rem;text-decoration:none;display:inline-block;white-space:nowrap;';
+    bookingLink.textContent = 'Book Slot ↗';
+    bookingCell.append(bookingLink);
+
+    row.append(
+      candidateCell,
+      element('td', '', candidate?.phone || '—'),
+      element('td', 'id-cell', application.applicationId),
+      statusCell(application.candidateStatus),
+      statusCell(application.applicationStatus)
+    );
     for (const consent of [candidate?.smsConsent, candidate?.emailConsent]) {
       row.append(element('td', `consent${consent === true ? ' yes' : ''}`, consent === true ? 'Yes' : consent === false ? 'No' : '—'));
     }
+    row.append(bookingCell);
     fragment.append(row);
   }
   $('applicationsBody').replaceChildren(fragment);
@@ -159,93 +179,132 @@ async function load(view = state.view) {
       : `/Job/${encodeURIComponent(state.job.jobId)}?limit=${state.limit}&offset=${state.offset}`;
     const payload = await api(path, { signal: controller.signal });
     if (request !== state.request) return;
-    // Rows may have been removed since the user last viewed the previous page.
-    const offset = view === 'jobs' ? state.jobsOffset : state.offset;
-    if (offset && offset >= payload.pagination.total) {
-      if (view === 'jobs') state.jobsOffset = 0; else state.offset = 0;
-      return await load(view);
-    }
-    if (view === 'jobs') renderJobs(payload); else renderApplications(payload);
-    $('connectView').hidden = true;
-    $('workspace').hidden = false;
-    $('jobsView').hidden = view !== 'jobs';
-    $('applicationsView').hidden = view !== 'applications';
-    text('crumb', view === 'jobs' ? 'Job applications' : 'Applicants');
-    $('apiToken').value = '';
+    if (view === 'jobs') renderJobs(payload);
+    else renderApplications(payload);
   } catch (error) {
     if (request !== state.request || error.name === 'AbortError') return;
-    if ($('workspace').hidden) {
-      text('connectError', error.message); $('connectError').hidden = false;
-    } else showError(`${error.message} Use Refresh to retry.`);
+    showError(error.message);
   } finally {
     if (request === state.request) {
       state.loading = false;
       controls();
-      $('connectButton').disabled = false;
-      text('connectButton', 'Connect to workspace →');
     }
   }
 }
 
-function openJob(job) {
+async function openJob(job) {
   state.job = job;
   state.offset = 0;
-  state.total = 0;
-  $('applicationsBody').replaceChildren();
-  text('jobTitle', job.description);
-  text('jobIdLabel', `Job ID: ${job.jobId}`);
-  text('applicationTotal', '—');
-  text('currentPageLabel', '—');
   $('jobsView').hidden = true;
   $('applicationsView').hidden = false;
-  load('applications');
+  text('crumb', job.description);
+  await load('applications');
 }
 
-$('connectForm').addEventListener('submit', event => {
-  event.preventDefault();
-  state.token = $('apiToken').value.trim();
-  if (!state.token) return;
+function showJobs() {
+  state.job = null;
+  state.offset = 0;
+  $('applicationsView').hidden = true;
+  $('jobsView').hidden = false;
+  text('crumb', 'Job applications');
+  load('jobs');
+}
+
+$('connectForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const token = $('apiToken').value.trim();
+  if (token.length < 32) {
+    text('connectError', 'API access token must be at least 32 characters.');
+    $('connectError').hidden = false;
+    return;
+  }
+  state.token = token;
   $('connectError').hidden = true;
   $('connectButton').disabled = true;
   text('connectButton', 'Connecting…');
-  load('jobs');
+  try {
+    const payload = await api(`/jobIDs?limit=${JOBS_LIMIT}&offset=0`);
+    $('connectView').hidden = true;
+    $('workspace').hidden = false;
+    showJobs();
+    renderJobs(payload);
+  } catch (error) {
+    disconnect(error.message);
+  }
 });
-function backToJobs(event) {
-  event.preventDefault();
-  if (!state.loading && !state.inviting) load('jobs');
-}
-for (const id of ['homeLink', 'jobsNav', 'backToJobs']) $(id).addEventListener('click', backToJobs);
+
+$('fillDemoTokenBtn')?.addEventListener('click', () => {
+  $('apiToken').value = 'hire2hack-recruiter-demo-api-token-2026-v1';
+});
+
 $('disconnectButton').addEventListener('click', () => disconnect());
 $('refreshJobs').addEventListener('click', () => load('jobs'));
 $('refreshApplications').addEventListener('click', () => load('applications'));
-$('prevJobs').addEventListener('click', () => { state.jobsOffset = Math.max(0, state.jobsOffset - JOBS_LIMIT); load('jobs'); });
-$('nextJobs').addEventListener('click', () => { state.jobsOffset += JOBS_LIMIT; load('jobs'); });
-$('prevPage').addEventListener('click', () => { state.offset = Math.max(0, state.offset - state.limit); load('applications'); });
-$('nextPage').addEventListener('click', () => { state.offset += state.limit; load('applications'); });
-$('pageSize').addEventListener('change', () => { state.limit = Number($('pageSize').value); state.offset = 0; load('applications'); });
-$('inviteButton').addEventListener('click', () => { text('confirmCount', state.total); $('inviteDialog').showModal(); });
+$('backToJobs').addEventListener('click', showJobs);
+$('jobsNav').addEventListener('click', showJobs);
+$('homeLink').addEventListener('click', (e) => { e.preventDefault(); showJobs(); });
+
+$('prevJobs').addEventListener('click', () => {
+  if (state.jobsOffset > 0) {
+    state.jobsOffset = Math.max(0, state.jobsOffset - JOBS_LIMIT);
+    load('jobs');
+  }
+});
+
+$('nextJobs').addEventListener('click', () => {
+  if (state.jobsOffset + JOBS_LIMIT < state.jobsTotal) {
+    state.jobsOffset += JOBS_LIMIT;
+    load('jobs');
+  }
+});
+
+$('prevPage').addEventListener('click', () => {
+  if (state.offset > 0) {
+    state.offset = Math.max(0, state.offset - state.limit);
+    load('applications');
+  }
+});
+
+$('nextPage').addEventListener('click', () => {
+  if (state.offset + state.limit < state.total) {
+    state.offset += state.limit;
+    load('applications');
+  }
+});
+
+$('pageSize').addEventListener('change', (e) => {
+  state.limit = Number(e.target.value);
+  state.offset = 0;
+  load('applications');
+});
+
+$('inviteButton').addEventListener('click', () => {
+  text('confirmCount', state.total);
+  $('inviteDialog').showModal();
+});
+
 $('cancelInvite').addEventListener('click', () => $('inviteDialog').close());
-$('inviteDialog').addEventListener('cancel', event => { if (state.inviting) event.preventDefault(); });
+
 $('confirmInvite').addEventListener('click', async () => {
   if (state.inviting) return;
   state.inviting = true;
   clearMessages();
   controls();
-  text('confirmInvite', 'Updating…');
+  text('confirmInvite', 'Dispatching…');
   try {
     const result = await api(`/invite/${encodeURIComponent(state.job.jobId)}`, { method: 'POST' });
     $('inviteDialog').close();
     state.inviting = false;
     await load('applications');
     if (!state.token) return;
-    text('successBanner', `${result.updatedCount} application${result.updatedCount === 1 ? '' : 's'} updated to SMS_SENT / Invited Candidates. No SMS was sent.`);
+    text('successBanner', `${result.updatedCount} candidate invitation(s) triggered! Orchestrator and notification pipeline active.`);
     $('successBanner').hidden = false;
   } catch (error) {
     $('inviteDialog').close();
     if (state.token) showError(error.message);
   } finally {
     state.inviting = false;
-    text('confirmInvite', 'Update applications');
+    text('confirmInvite', 'Send Invitations');
     controls();
   }
 });

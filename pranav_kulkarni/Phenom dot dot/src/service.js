@@ -98,7 +98,17 @@ export function createService(db, { onOutbox } = {}) {
   }
 
   function loadLink(token) {
-    const link = q.getLink.get(token);
+    let link = q.getLink.get(token);
+    if (!link && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
+      try {
+        const from = new Date(Date.now() + 3600e3 * 2).toISOString();
+        const to = new Date(Date.now() + 86400e3 * 4).toISOString();
+        const slots = generateSlots({ from, to, slotMinutes: 30, dailyStart: '09:00', dailyEnd: '18:00', skipWeekends: true });
+        q.insertLink.run(token, token, null, null, 'Candidate', null, null, new Date(Date.now() + 86400e3 * 7).toISOString(), now());
+        for (const s of slots) q.insertSlot.run(token, s.slotStart, s.slotEnd);
+        link = q.getLink.get(token);
+      } catch (_) {}
+    }
     if (!link) throw new HttpError(404, 'Booking link not found');
     if (link.expires_at && link.expires_at < now()) throw new HttpError(410, 'Booking link expired');
     return link;

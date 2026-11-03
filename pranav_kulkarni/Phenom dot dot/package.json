@@ -1,0 +1,19 @@
+{
+  "name": "phenom-booking-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Candidate interview booking and slot scheduling service",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-cron": "^3.0.3",
+    "zod": "^3.23.8"
+  }
+}

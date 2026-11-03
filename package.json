@@ -1,0 +1,16 @@
+{
+  "name": "hire2hack-integrated-platform",
+  "version": "1.0.0",
+  "description": "HIRE2HACK Automated Screening Platform - End-to-End Integrated Microservices",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node run-all.js",
+    "test": "node run-all.js --test",
+    "test:integration": "node test-integration.js",
+    "test:app": "cd application_service && npm test",
+    "test:portal": "cd \"pranav_kulkarni/Phenom dot dot\" && npm test",
+    "test:notification": "cd notification_service_hafeez && mvnw.cmd test",
+    "test:booking": "cd interview-booking-service && mvnw.cmd test"
+  }
+}

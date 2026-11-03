@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
-const isoDate = z.iso.datetime({ offset: true }).transform((s) => new Date(s).toISOString());
+const isoDate = z.string().datetime({ offset: true }).transform((s) => new Date(s).toISOString());
 const future = (v) => v.slotStart > new Date().toISOString();
 const slot = { slotStart: isoDate, slotEnd: isoDate };
 const slotOrder = [(v) => v.slotEnd > v.slotStart, { message: 'slotEnd must be after slotStart', path: ['slotEnd'] }];
 const inFuture = [future, { message: 'slotStart must be in the future', path: ['slotStart'] }];
 
 const name = z.string().trim().min(1).max(200);
-const email = z.email().toLowerCase();
+const email = z.string().email().toLowerCase();
 const phone = z.string().trim().max(30);
 
 export const createBookingSchema = z.object({
@@ -46,7 +46,7 @@ export const slotPickSchema = z.object({ slotStart: isoDate });
 
 export const listQuerySchema = z.object({
   status: z.enum(['PENDING', 'PROCESSING', 'NOTIFIED', 'FAILED', 'CANCELLED']).optional(),
-  email: z.email().toLowerCase().optional(),
+  email: z.string().email().toLowerCase().optional(),
   from: isoDate.optional(),
   to: isoDate.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
