@@ -7,6 +7,7 @@ com\notificationsystem\NotificationServiceApplication.class
 com\notificationsystem\api\NotificationService.class
 com\notificationsystem\model\UserPreference.class
 com\notificationsystem\client\NotificationHttpClient$EmailRequest.class
+com\notificationsystem\controller\NotificationController.class
 com\notificationsystem\model\Notification.class
 com\notificationsystem\api\AsyncNotificationService.class
 com\notificationsystem\template\NotificationTemplateFactory.class

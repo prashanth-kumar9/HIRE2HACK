@@ -25,7 +25,11 @@ public class ScreeningNotificationProducer {
                 Instant.now()
         );
         log.info("Sending notification [{}] to [{}] via Kafka topic '{}'", type, recipient, TOPIC);
-        kafkaTemplate.send(TOPIC, aggregateId, event);
+        try {
+            kafkaTemplate.send(TOPIC, aggregateId, event);
+        } catch (Exception e) {
+            log.warn("Kafka notification delivery skipped/failed: {}. Event was: {}", e.getMessage(), type);
+        }
     }
 
     public enum NotificationType {

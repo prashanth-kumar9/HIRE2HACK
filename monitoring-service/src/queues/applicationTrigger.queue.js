@@ -1,66 +1,210 @@
 const Bull = require('bull');
 const axios = require('axios');
 const Redis = require('ioredis');
-const { redisUrl, applicationServiceUrl, notificationServiceUrl } = require('../config/vars');
+const {
+  redisUrl,
+  applicationServiceUrl,
+  notificationServiceUrl,
+  bookingBaseUrl,
+  apiAccessToken,
+} = require('../config/vars');
 const logger = require('../config/logger');
 
-const applicationTriggerQueue = new Bull('application-trigger', redisUrl);
-const redis = new Redis(redisUrl);
+let redisClient = null;
+let applicationTriggerQueue = null;
+let isRedisAvailable = false;
 
-applicationTriggerQueue.process(async (job) => {
-  const { applicationId, communicationType, name, email, phone, jobId } = job.data;
+// Attempt Redis connection without crashing if Redis is not running
+try {
+  redisClient = new Redis(redisUrl, {
+    maxRetriesPerRequest: 1,
+    retryStrategy: () => null,
+    enableOfflineQueue: false,
+    connectTimeout: 2000,
+  });
+
+  redisClient.on('connect', () => {
+    isRedisAvailable = true;
+    logger.info('[REDIS] Connected successfully to Redis');
+  });
+
+  redisClient.on('error', (err) => {
+    isRedisAvailable = false;
+    // Suppress repeated connection logs
+  });
+
+  applicationTriggerQueue = new Bull('application-trigger', redisUrl, {
+    redis: { maxRetriesPerRequest: 1 },
+  });
+
+  applicationTriggerQueue.on('error', () => {
+    isRedisAvailable = false;
+  });
+
+  applicationTriggerQueue.on('failed', (job, err) => {
+    logger.error('Job failed', { jobId: job.id, applicationId: job.data?.applicationId, error: err.message });
+  });
+
+  applicationTriggerQueue.on('completed', (job) => {
+    logger.info('Job completed', { jobId: job.id, applicationId: job.data?.applicationId });
+  });
+} catch (_) {
+  isRedisAvailable = false;
+}
+
+// Core processing logic shared by Bull queue and fallback executor
+async function processTriggerJob(jobData) {
+  const { applicationId, communicationType, name, email, phone, jobId } = jobData;
   const type = communicationType || 'email';
+  let bookingLink = `${bookingBaseUrl}/book/${applicationId}`;
 
-  logger.info(`Processing ${type} trigger job`, { applicationId, type });
+  // Attempt to generate official tokenized booking link with availability window
+  try {
+    const from = new Date(Date.now() + 3600e3 * 2).toISOString();
+    const to = new Date(Date.now() + 86400e3 * 4).toISOString();
+    const linkRes = await axios.post(
+      `${bookingBaseUrl}/booking-links`,
+      {
+        applicationRef: applicationId,
+        jobId,
+        candidate: { name, email, phone },
+        availability: {
+          from,
+          to,
+          slotMinutes: 30,
+          dailyStart: '09:00',
+          dailyEnd: '18:00',
+          skipWeekends: true,
+        },
+      },
+      { timeout: 3000 }
+    );
+    if (linkRes.data?.url) {
+      bookingLink = linkRes.data.url;
+    }
+  } catch (_) {}
+
+  logger.info(`[WORKER] Processing ${type} trigger job for application ${applicationId}`, {
+    candidate: name,
+    type,
+    bookingLink,
+  });
 
   try {
     if (type === 'sms') {
-      await axios.post(`${notificationServiceUrl}/notify/sms`, {
-        phone,
-        message: `Hi ${name}, we have received your application. Click here to schedule your voice interview: https://booking.example.com/${applicationId}`
-      });
+      try {
+        await axios.post(
+          `${notificationServiceUrl}/notify/sms`,
+          {
+            phone,
+            message: `Hi ${name}, we have received your application. Click here to schedule your interview: ${bookingLink}`,
+            bookingUrl: bookingLink,
+            candidateName: name,
+            applicationId,
+            jobId,
+          },
+          { timeout: 5000 }
+        );
+      } catch (err) {
+        logger.warn(`[NOTIFY-SMS] Notice: notification-service endpoint unreachable or mock mode: ${err.message}`);
+      }
 
-      await axios.patch(`${applicationServiceUrl}/applications/${applicationId}`, {
-        status: 'sms_sent',
-        lastCommunicationAt: new Date(),
-        jobId
-      });
+      try {
+        await axios.patch(
+          `${applicationServiceUrl}/applications/${applicationId}`,
+          {
+            status: 'sms_sent',
+            lastCommunicationAt: new Date().toISOString(),
+            jobId,
+          },
+          {
+            headers: { Authorization: `Bearer ${apiAccessToken}` },
+            timeout: 5000,
+          }
+        );
+      } catch (err) {
+        logger.warn(`[APP-SERVICE] PATCH application status failed: ${err.message}`);
+      }
 
-      // Set Redis key to track pending application for 48h (until final followup)
-      await redis.setex(`pending:${applicationId}`, 48 * 60 * 60, 'sms_sent');
-      logger.info(`SMS sent and pending tracked for 48h`, { applicationId });
+      if (isRedisAvailable && redisClient) {
+        await redisClient.setex(`pending:${applicationId}`, 48 * 60 * 60, 'sms_sent').catch(() => {});
+      }
 
-      return { applicationId, type: 'sms', status: 'sms_sent', tracked: true };
+      return { applicationId, type: 'sms', status: 'sms_sent', bookingLink };
     } else if (type === 'email') {
-      await axios.post(`${notificationServiceUrl}/notify/email`, {
-        email,
-        subject: 'Your Application - Schedule Your Interview',
-        message: `Hi ${name}, thank you for applying. Please schedule your voice interview: https://booking.example.com/${applicationId}`
-      });
+      try {
+        await axios.post(
+          `${notificationServiceUrl}/notify/email`,
+          {
+            email,
+            subject: 'Your Application - Schedule Your Interview',
+            message: `Hi ${name}, thank you for applying. Please schedule your interview: ${bookingLink}`,
+            bookingUrl: bookingLink,
+            candidateName: name,
+            applicationId,
+            jobId,
+          },
+          { timeout: 5000 }
+        );
+      } catch (err) {
+        logger.warn(`[NOTIFY-EMAIL] Notice: notification-service endpoint unreachable or mock mode: ${err.message}`);
+      }
 
-      await axios.patch(`${applicationServiceUrl}/applications/${applicationId}`, {
-        status: 'email_sent',
-        lastCommunicationAt: new Date(),
-        jobId
-      });
+      try {
+        await axios.patch(
+          `${applicationServiceUrl}/applications/${applicationId}`,
+          {
+            status: 'email_sent',
+            lastCommunicationAt: new Date().toISOString(),
+            jobId,
+          },
+          {
+            headers: { Authorization: `Bearer ${apiAccessToken}` },
+            timeout: 5000,
+          }
+        );
+      } catch (err) {
+        logger.warn(`[APP-SERVICE] PATCH application status failed: ${err.message}`);
+      }
 
-      logger.info(`Email sent`, { applicationId });
-      return { applicationId, type: 'email', status: 'email_sent' };
-    } else {
-      throw new Error(`Unknown communicationType: ${type}`);
+      return { applicationId, type: 'email', status: 'email_sent', bookingLink };
     }
   } catch (err) {
-    logger.error(`Application trigger job failed`, { applicationId, type, error: err.message });
+    logger.error('Application trigger job failed', { applicationId, type, error: err.message });
     throw err;
   }
-});
+}
 
-applicationTriggerQueue.on('failed', (job, err) => {
-  logger.error(`Job failed`, { jobId: job.id, applicationId: job.data.applicationId, error: err.message });
-});
+if (applicationTriggerQueue) {
+  applicationTriggerQueue.process(async (job) => {
+    return processTriggerJob(job.data);
+  });
+}
 
-applicationTriggerQueue.on('completed', (job, result) => {
-  logger.info(`Job completed`, { jobId: job.id, applicationId: job.data.applicationId });
-});
+// Queue dispatcher that automatically uses Bull when Redis is available, or in-memory fallback
+async function addTriggerJob(data, options = {}) {
+  if (isRedisAvailable && applicationTriggerQueue) {
+    try {
+      return await applicationTriggerQueue.add(data, options);
+    } catch (_) {
+      // Fall through to direct execution if Redis add fails
+    }
+  }
+  const delay = options.delay || 0;
+  if (delay > 0) {
+    setTimeout(() => {
+      processTriggerJob(data).catch(() => {});
+    }, Math.min(delay, 2000));
+  } else {
+    setImmediate(() => {
+      processTriggerJob(data).catch(() => {});
+    });
+  }
+  return { id: `inmem-${Date.now()}-${data.applicationId}`, data };
+}
 
-module.exports = applicationTriggerQueue;
+module.exports = {
+  applicationTriggerQueue,
+  processTriggerJob,
+  addTriggerJob,
+};

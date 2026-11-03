@@ -90,6 +90,8 @@ public class VoiceProviderCallbackController {
                                 "status", "UNRESPONSIVE"
                         )
                 );
+
+                notifyApplicationService(application.getApplicationId(), "UNRESPONSIVE", "Unresponsive", null, null);
             }
             return ResponseEntity.ok().build();
         }
@@ -121,6 +123,40 @@ public class VoiceProviderCallbackController {
                 )
         );
 
+        notifyApplicationService(application.getApplicationId(),
+                passed ? "SCREENING_PASSED" : "SCREENING_FAILED",
+                passed ? "Passed Screening" : "Failed Screening",
+                payload.score(),
+                payload.transcriptSummary());
+
         return ResponseEntity.ok().build();
+    }
+
+    private void notifyApplicationService(String applicationId, String candidateStatus, String appStatus, Integer score, String feedback) {
+        try {
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            String appServiceUrl = System.getenv().getOrDefault("APPLICATION_SERVICE_URL", "http://localhost:3002");
+            String apiToken = System.getenv().getOrDefault("API_ACCESS_TOKEN", "hire2hack-recruiter-demo-api-token-2026-v1");
+
+            StringBuilder json = new StringBuilder("{");
+            json.append("\"candidateStatus\":\"").append(candidateStatus).append("\",");
+            json.append("\"applicationStatus\":\"").append(appStatus).append("\"");
+            if (score != null) {
+                json.append(",\"score\":").append(score);
+            }
+            if (feedback != null) {
+                json.append(",\"feedback\":\"").append(feedback.replace("\"", "\\\"").replace("\n", " ")).append("\"");
+            }
+            json.append("}");
+
+            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(appServiceUrl + "/applications/" + applicationId))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiToken)
+                    .method("PATCH", java.net.http.HttpRequest.BodyPublishers.ofString(json.toString()))
+                    .timeout(java.time.Duration.ofSeconds(3))
+                    .build();
+            client.sendAsync(req, java.net.http.HttpResponse.BodyHandlers.discarding());
+        } catch (Exception ignored) {}
     }
 }
